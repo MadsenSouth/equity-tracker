@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Equity Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+
+    #last-updated {
+      font-size: 0.8rem;
+      color: #64748b;
+    }
+
+    #refresh-btn {
+      margin-left: auto;
+      padding: 0.4rem 1rem;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.15s;
+    }
+    #refresh-btn:hover { background: #1d4ed8; }
+    #refresh-btn:disabled { background: #334155; cursor: default; }
+
+    /* Summary cards */
+    #summary {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: #1e2332;
+      border: 1px solid #2d3748;
+      border-radius: 10px;
+      padding: 1rem 1.4rem;
+      min-width: 160px;
+    }
+
+    .card-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #94a3b8;
+      margin-bottom: 0.3rem;
+    }
+
+    .card-value {
+      font-size: 1.35rem;
+      font-weight: 600;
+    }
+
+    /* Table */
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid #2d3748;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    thead tr { background: #1e2332; }
+
+    th {
+      padding: 0.75rem 1rem;
+      text-align: right;
+      font-weight: 600;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    th:first-child { text-align: left; }
+    th:hover { color: #e2e8f0; }
+    th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+    th.sorted .sort-arrow { opacity: 1; color: #60a5fa; }
+
+    tbody tr {
+      border-top: 1px solid #1e2332;
+      transition: background 0.1s;
+    }
+    tbody tr:hover { background: #1a1f2e; }
+
+    td {
+      padding: 0.7rem 1rem;
+      text-align: right;
+      white-space: nowrap;
+    }
+    td:first-child { text-align: left; font-weight: 600; letter-spacing: 0.02em; }
+
+    .positive { color: #4ade80; }
+    .negative { color: #f87171; }
+    .neutral  { color: #94a3b8; }
+
+    /* Loading / error states */
+    #status {
+      text-align: center;
+      padding: 3rem;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid #334155;
+      border-top-color: #60a5fa;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Equity Tracker</h1>
+  <span id="last-updated"></span>
+  <button id="refresh-btn" onclick="loadPortfolio()">Refresh</button>
+</header>
+
+<div id="summary"></div>
+
+<div class="table-wrapper">
+  <table id="portfolio-table">
+    <thead>
+      <tr>
+        <th data-col="ticker">Ticker <span class="sort-arrow">↕</span></th>
+        <th data-col="shares">Shares <span class="sort-arrow">↕</span></th>
+        <th data-col="cost_basis">Cost Basis <span class="sort-arrow">↕</span></th>
+        <th data-col="current_price">Price <span class="sort-arrow">↕</span></th>
+        <th data-col="market_value">Mkt Value <span class="sort-arrow">↕</span></th>
+        <th data-col="pnl_dollars">P&L ($) <span class="sort-arrow">↕</span></th>
+        <th data-col="pnl_pct">P&L (%) <span class="sort-arrow">↕</span></th>
+        <th data-col="return_1y_pct">1Y Return <span class="sort-arrow">↕</span></th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr><td colspan="8" id="status"><span class="spinner"></span>Loading portfolio…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  let portfolioData = [];
+  let sortCol = null;
+  let sortAsc = true;
+
+  const fmt = {
+    currency: v => v == null ? "—" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    pct:      v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%",
+    shares:   v => v == null ? "—" : v.toLocaleString("en-US"),
+  };
+
+  function colorClass(v) {
+    if (v == null) return "neutral";
+    return v >= 0 ? "positive" : "negative";
+  }
+
+  function renderTable(data) {
+    const tbody = document.getElementById("table-body");
+    if (!data.length) {
+      tbody.innerHTML = `<tr><td colspan="8" id="status">No holdings found.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td>${r.ticker}</td>
+        <td>${fmt.shares(r.shares)}</td>
+        <td>${fmt.currency(r.cost_basis)}</td>
+        <td>${fmt.currency(r.current_price)}</td>
+        <td>${fmt.currency(r.market_value)}</td>
+        <td class="${colorClass(r.pnl_dollars)}">${fmt.currency(r.pnl_dollars)}</td>
+        <td class="${colorClass(r.pnl_pct)}">${fmt.pct(r.pnl_pct)}</td>
+        <td class="${colorClass(r.return_1y_pct)}">${fmt.pct(r.return_1y_pct)}</td>
+      </tr>
+    `).join("");
+  }
+
+  function renderSummary(data) {
+    const totalValue   = data.reduce((s, r) => s + (r.market_value ?? 0), 0);
+    const totalCost    = data.reduce((s, r) => s + (r.shares * r.cost_basis), 0);
+    const totalPnl     = totalValue - totalCost;
+    const totalPnlPct  = totalCost ? (totalPnl / totalCost) * 100 : 0;
+    const winners      = data.filter(r => (r.pnl_pct ?? 0) >= 0).length;
+
+    document.getElementById("summary").innerHTML = `
+      <div class="card">
+        <div class="card-label">Total Value</div>
+        <div class="card-value">${fmt.currency(totalValue)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total Cost</div>
+        <div class="card-value">${fmt.currency(totalCost)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total P&amp;L</div>
+        <div class="card-value ${colorClass(totalPnl)}">${fmt.currency(totalPnl)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">P&amp;L %</div>
+        <div class="card-value ${colorClass(totalPnlPct)}">${fmt.pct(totalPnlPct)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Positions</div>
+        <div class="card-value">${data.length} <span style="font-size:0.8rem;color:#4ade80">(${winners} up)</span></div>
+      </div>
+    `;
+  }
+
+  async function loadPortfolio() {
+    const btn = document.getElementById("refresh-btn");
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    document.getElementById("table-body").innerHTML =
+      `<tr><td colspan="8" id="status"><span class="spinner"></span>Fetching live prices…</td></tr>`;
+
+    try {
+      const res  = await fetch("/api/portfolio");
+      const json = await res.json();
+      if (json.status !== "ok") throw new Error(json.message);
+
+      portfolioData = json.data;
+      renderSummary(portfolioData);
+      renderTable(portfolioData);
+
+      const now = new Date();
+      document.getElementById("last-updated").textContent =
+        "Updated " + now.toLocaleTimeString();
+    } catch (err) {
+      document.getElementById("table-body").innerHTML =
+        `<tr><td colspan="8" id="status" style="color:#f87171">Error: ${err.message}</td></tr>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Refresh";
+    }
+  }
+
+  // Column sort
+  document.querySelectorAll("th[data-col]").forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (sortCol === col) {
+        sortAsc = !sortAsc;
+      } else {
+        sortCol = col;
+        sortAsc = true;
+      }
+
+      document.querySelectorAll("th").forEach(t => t.classList.remove("sorted"));
+      th.classList.add("sorted");
+      th.querySelector(".sort-arrow").textContent = sortAsc ? "↑" : "↓";
+
+      const sorted = [...portfolioData].sort((a, b) => {
+        const av = a[col], bv = b[col];
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === "string") return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+        return sortAsc ? av - bv : bv - av;
+      });
+      renderTable(sorted);
+    });
+  });
+
+  loadPortfolio();
+</script>
+</body>
+</html>
