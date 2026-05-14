@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Equity Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -140,6 +141,57 @@
       margin-right: 0.5rem;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Chart section */
+    #chart-section {
+      background: #1e2332;
+      border: 1px solid #2d3748;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    #chart-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    #chart-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #94a3b8;
+    }
+
+    .period-btns { display: flex; gap: 0.4rem; }
+
+    .period-btn {
+      padding: 0.25rem 0.65rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 1px solid #334155;
+      border-radius: 5px;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .period-btn:hover { border-color: #60a5fa; color: #e2e8f0; }
+    .period-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+    #chart-container { position: relative; height: 280px; }
+
+    #chart-loading {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #1e2332;
+      font-size: 0.85rem;
+      color: #64748b;
+      border-radius: 6px;
+    }
   </style>
 </head>
 <body>
@@ -151,6 +203,22 @@
 </header>
 
 <div id="summary"></div>
+
+<div id="chart-section">
+  <div id="chart-header">
+    <span id="chart-title">Price Return (%)</span>
+    <div class="period-btns">
+      <button class="period-btn" data-period="1mo">1M</button>
+      <button class="period-btn" data-period="3mo">3M</button>
+      <button class="period-btn" data-period="6mo">6M</button>
+      <button class="period-btn active" data-period="1y">1Y</button>
+    </div>
+  </div>
+  <div id="chart-container">
+    <div id="chart-loading"><span class="spinner"></span>Loading chart…</div>
+    <canvas id="price-chart"></canvas>
+  </div>
+</div>
 
 <div class="table-wrapper">
   <table id="portfolio-table">
@@ -173,6 +241,116 @@
 </div>
 
 <script>
+  const CHART_COLORS = [
+    "#60a5fa", "#34d399", "#f59e0b", "#a78bfa",
+    "#fb7185", "#38bdf8", "#facc15", "#4ade80",
+  ];
+
+  let chart = null;
+
+  async function loadChart(period = "1y") {
+    const loading = document.getElementById("chart-loading");
+    loading.style.display = "flex";
+
+    try {
+      const res  = await fetch(`/api/history?period=${period}`);
+      const json = await res.json();
+      if (json.status !== "ok") throw new Error(json.message);
+
+      const { dates, series } = json;
+      const tickers = Object.keys(series);
+
+      // Thin x-axis labels: show roughly 8 evenly spaced dates
+      const step = Math.max(1, Math.floor(dates.length / 8));
+      const labels = dates.map((d, i) => i % step === 0 ? d : "");
+
+      const datasets = tickers.map((ticker, i) => ({
+        label: ticker,
+        data: series[ticker],
+        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.2,
+        spanGaps: true,
+      }));
+
+      if (chart) {
+        chart.data.labels   = dates;
+        chart.data.datasets = datasets;
+        chart.update();
+      } else {
+        const ctx = document.getElementById("price-chart").getContext("2d");
+        chart = new Chart(ctx, {
+          type: "line",
+          data: { labels: dates, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: {
+                position: "top",
+                align: "end",
+                labels: {
+                  color: "#94a3b8",
+                  boxWidth: 12,
+                  boxHeight: 2,
+                  padding: 16,
+                  font: { size: 11 },
+                },
+              },
+              tooltip: {
+                backgroundColor: "#1e2332",
+                borderColor: "#2d3748",
+                borderWidth: 1,
+                titleColor: "#94a3b8",
+                bodyColor: "#e2e8f0",
+                padding: 10,
+                callbacks: {
+                  label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? (ctx.parsed.y >= 0 ? "+" : "") + ctx.parsed.y.toFixed(2) + "%" : "—"}`,
+                },
+              },
+            },
+            scales: {
+              x: {
+                ticks: {
+                  color: "#475569",
+                  font: { size: 10 },
+                  maxRotation: 0,
+                  callback: (_, i) => labels[i] || "",
+                },
+                grid: { color: "#1a1f2e" },
+              },
+              y: {
+                ticks: {
+                  color: "#475569",
+                  font: { size: 10 },
+                  callback: v => (v >= 0 ? "+" : "") + v + "%",
+                },
+                grid: { color: "#1a1f2e" },
+              },
+            },
+          },
+        });
+      }
+    } catch (err) {
+      loading.textContent = "Chart error: " + err.message;
+      loading.style.color = "#f87171";
+      return;
+    }
+
+    loading.style.display = "none";
+  }
+
+  document.querySelectorAll(".period-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".period-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      loadChart(btn.dataset.period);
+    });
+  });
+
   let portfolioData = [];
   let sortCol = null;
   let sortAsc = true;
@@ -295,6 +473,7 @@
   });
 
   loadPortfolio();
+  loadChart("1y");
 </script>
 </body>
 </html>

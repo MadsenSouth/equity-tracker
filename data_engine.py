@@ -53,6 +53,32 @@ def fetch_one_year_returns(tickers: list[str]) -> dict[str, float | None]:
     return returns
 
 
+def fetch_price_history(tickers: list[str], period: str = "1y") -> dict:
+    data = yf.download(tickers, period=period, auto_adjust=True, progress=False)
+    close = data["Close"]
+
+    if isinstance(close, pd.Series):
+        close = close.to_frame(name=tickers[0])
+
+    dates = [d.strftime("%Y-%m-%d") for d in close.index]
+    series = {}
+    for ticker in tickers:
+        try:
+            col = close[ticker]
+            first_valid = col.first_valid_index()
+            if first_valid is None:
+                continue
+            base = float(col[first_valid])
+            series[ticker] = [
+                round((float(v) / base - 1) * 100, 2) if pd.notna(v) else None
+                for v in col
+            ]
+        except KeyError:
+            pass
+
+    return {"dates": dates, "series": series}
+
+
 def build_portfolio_snapshot(csv_path: str = "portfolio.csv") -> list[dict]:
     portfolio = load_portfolio(csv_path)
     tickers = portfolio["Ticker"].tolist()
