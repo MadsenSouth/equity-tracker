@@ -111,11 +111,13 @@ def remove_holding_route(name, lot_id):
 
 @app.route("/api/portfolios/<name>/history")
 def history(name):
+    start  = request.args.get("start", "").strip()
+    end    = request.args.get("end", "").strip()
     period = request.args.get("period", "1y")
     if period not in ("1mo", "3mo", "6mo", "1y"):
         period = "1y"
     try:
-        data = fetch_price_history(name, period)
+        data = fetch_price_history(name, period=period, start=start or None, end=end or None)
         return jsonify({"status": "ok", **data})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

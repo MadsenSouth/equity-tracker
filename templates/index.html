@@ -136,6 +136,26 @@
       background: #1e2332; font-size: 0.82rem; color: #64748b;
     }
 
+    /* Custom date range row */
+    .custom-range {
+      display: none;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0 0.6rem;
+      flex-wrap: wrap;
+    }
+    .custom-range.open { display: flex; }
+    .custom-range input[type="date"] { width: auto; }
+    .custom-range .arrow { color: #475569; font-size: 0.85rem; }
+    .custom-range .apply-btn {
+      padding: 0.22rem 0.7rem; font-size: 0.75rem; font-weight: 600;
+      background: #2563eb; color: #fff;
+      border: none; border-radius: 5px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .custom-range .apply-btn:hover { background: #1d4ed8; }
+    .custom-range .range-msg { font-size: 0.75rem; color: #f87171; }
+
     /* ── Holdings table ── */
     .holdings-wrap {
       border: 1px solid #2d3748;
@@ -379,7 +399,15 @@
             <button class="period-btn" data-period="3mo">3M</button>
             <button class="period-btn" data-period="6mo">6M</button>
             <button class="period-btn active" data-period="1y">1Y</button>
+            <button class="period-btn" data-period="custom">Custom</button>
           </div>
+        </div>
+        <div class="custom-range" id="cr-${esc}">
+          <input type="date" id="crs-${esc}" title="Start date" />
+          <span class="arrow">→</span>
+          <input type="date" id="cre-${esc}" title="End date" />
+          <button class="apply-btn" onclick="applyCustomRange('${name}')">Apply</button>
+          <span class="range-msg" id="crm-${esc}"></span>
         </div>
         <div class="chart-wrap">
           <div class="chart-loading" id="cl-${esc}"><span class="spinner"></span>Loading…</div>
@@ -463,8 +491,28 @@
       btn.addEventListener("click", () => {
         document.querySelectorAll(`#pbtns-${esc} .period-btn`).forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
-        loadChart(name, btn.dataset.period);
+        const cr = document.getElementById(`cr-${esc}`);
+        if (btn.dataset.period === "custom") {
+          cr?.classList.add("open");
+          // default end to today, start to 1 year ago
+          const end   = new Date();
+          const start = new Date(); start.setFullYear(start.getFullYear() - 1);
+          const toISO = d => d.toISOString().slice(0, 10);
+          const sEl = document.getElementById(`crs-${esc}`);
+          const eEl = document.getElementById(`cre-${esc}`);
+          if (sEl && !sEl.value) sEl.value = toISO(start);
+          if (eEl && !eEl.value) eEl.value = toISO(end);
+        } else {
+          cr?.classList.remove("open");
+          document.getElementById(`crm-${esc}`).textContent = "";
+          loadChart(name, btn.dataset.period);
+        }
       });
+    });
+
+    // Apply on Enter in end-date field
+    document.getElementById(`cre-${esc}`)?.addEventListener("keydown", e => {
+      if (e.key === "Enter") applyCustomRange(name);
     });
 
     // Wire up sort headers
@@ -583,7 +631,7 @@
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
-      await Promise.all([loadHoldings(name), loadChart(name, activePeriod(name))]);
+      await Promise.all([loadHoldings(name), reloadActiveChart(name)]);
       loadPortfolios();
     } catch (err) { alert("Error saving: " + err.message); }
   }
@@ -595,7 +643,7 @@
       const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings/${lotId}`, { method: "DELETE" });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
-      await Promise.all([loadHoldings(name), loadChart(name, activePeriod(name))]);
+      await Promise.all([loadHoldings(name), reloadActiveChart(name)]);
       loadPortfolios();
     } catch (err) { alert("Error: " + err.message); }
   }
@@ -627,7 +675,7 @@
       document.getElementById(`fcb-${esc}`).value = "";
       document.getElementById(`fpd-${esc}`).value = "";
       msg.textContent = `${ticker} added.`; msg.style.color = "#4ade80";
-      await Promise.all([loadHoldings(name), loadChart(name, activePeriod(name))]);
+      await Promise.all([loadHoldings(name), reloadActiveChart(name)]);
       loadPortfolios();
     } catch (err) {
       msg.textContent = err.message; msg.style.color = "#f87171";
@@ -640,19 +688,46 @@
      CHART
   ══════════════════════════════════════════ */
 
-  function activePeriod(name) {
-    const btn = document.querySelector(`#pbtns-${CSS.escape(name)} .period-btn.active`);
-    return btn ? btn.dataset.period : "1y";
+  function activeChartParams(name) {
+    const esc = CSS.escape(name);
+    const btn = document.querySelector(`#pbtns-${esc} .period-btn.active`);
+    if (btn?.dataset.period === "custom") {
+      return {
+        start: document.getElementById(`crs-${esc}`)?.value || "",
+        end:   document.getElementById(`cre-${esc}`)?.value || "",
+      };
+    }
+    return { period: btn?.dataset.period || "1y" };
   }
 
-  async function loadChart(name, period = "1y") {
+  function reloadActiveChart(name) {
+    const p = activeChartParams(name);
+    return "start" in p
+      ? loadChart(name, "1y", p.start, p.end)
+      : loadChart(name, p.period);
+  }
+
+  function applyCustomRange(name) {
+    const esc = CSS.escape(name);
+    const msg = document.getElementById(`crm-${esc}`);
+    const { start, end } = activeChartParams(name);
+    if (!start || !end) { msg.textContent = "Pick both dates."; return; }
+    if (start >= end)   { msg.textContent = "Start must be before end."; return; }
+    msg.textContent = "";
+    loadChart(name, "1y", start, end);
+  }
+
+  async function loadChart(name, period = "1y", start = null, end = null) {
     const esc     = CSS.escape(name);
     const loading = document.getElementById(`cl-${esc}`);
     if (!loading) return;
     loading.style.display = "flex";
 
+    const params = (start && end)
+      ? `start=${start}&end=${end}`
+      : `period=${period}`;
     try {
-      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/history?period=${period}`);
+      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/history?${params}`);
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
       const { dates, series } = json;

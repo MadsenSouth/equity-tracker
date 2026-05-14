@@ -137,11 +137,14 @@ def fetch_one_year_returns(tickers: list[str]) -> dict[str, float | None]:
     return returns
 
 
-def fetch_price_history(name: str, period: str = "1y") -> dict:
+def fetch_price_history(name: str, period: str = "1y", start: str | None = None, end: str | None = None) -> dict:
     tickers = load_portfolio(name)["Ticker"].unique().tolist()
     if not tickers:
         return {"dates": [], "series": {}}
-    close = _download_close(tickers, period=period)
+    if start and end:
+        close = _download_close(tickers, start=start, end=end)
+    else:
+        close = _download_close(tickers, period=period)
     dates = [d.strftime("%Y-%m-%d") for d in close.index]
     series = {}
     for t in tickers:
