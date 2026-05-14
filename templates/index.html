@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Equity Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -738,8 +739,6 @@
         backgroundColor: "transparent",
         borderWidth: 2, pointRadius: 0, tension: 0.2, spanGaps: true,
       }));
-      const step   = Math.max(1, Math.floor(dates.length / 8));
-      const labels = dates.map((d, i) => i % step === 0 ? d : "");
 
       if (charts[name]) {
         charts[name].data.labels   = dates;
@@ -763,13 +762,21 @@
                 backgroundColor: "#1e2332", borderColor: "#2d3748", borderWidth: 1,
                 titleColor: "#94a3b8", bodyColor: "#e2e8f0", padding: 10,
                 callbacks: {
+                  title: items => items[0]?.label
+                    ? new Date(items[0].label).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                    : "",
                   label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? (ctx.parsed.y >= 0 ? "+" : "") + ctx.parsed.y.toFixed(2) + "%" : "—"}`,
                 },
               },
             },
             scales: {
               x: {
-                ticks: { color: "#475569", font: { size: 10 }, maxRotation: 0, callback: (_, i) => labels[i] || "" },
+                type: "time",
+                time: {
+                  tooltipFormat: "yyyy-MM-dd",
+                  displayFormats: { day: "MMM d", week: "MMM d", month: "MMM yyyy", year: "yyyy" },
+                },
+                ticks: { color: "#475569", font: { size: 10 }, maxRotation: 0, maxTicksLimit: 8 },
                 grid: { color: "#1a1f2e" },
               },
               y: {
