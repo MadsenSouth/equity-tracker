@@ -1,5 +1,9 @@
 from flask import Flask, jsonify, render_template, request
-from data_engine import build_portfolio_snapshot, fetch_price_history, load_portfolio, add_holding, remove_holding
+from data_engine import (
+    list_portfolio_names, create_portfolio, delete_portfolio,
+    build_portfolios_summary, build_portfolio_snapshot,
+    fetch_price_history, add_holding, remove_holding,
+)
 
 app = Flask(__name__)
 
@@ -9,30 +13,52 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/api/portfolio")
-def portfolio():
+# --- Portfolio list ---
+
+@app.route("/api/portfolios")
+def get_portfolios():
     try:
-        data = build_portfolio_snapshot()
-        return jsonify({"status": "ok", "data": data})
+        return jsonify({"status": "ok", "data": build_portfolios_summary()})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/api/history")
-def history():
-    period = request.args.get("period", "1y")
-    if period not in ("1mo", "3mo", "6mo", "1y"):
-        period = "1y"
+@app.route("/api/portfolios", methods=["POST"])
+def new_portfolio():
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return jsonify({"status": "error", "message": "name is required"}), 400
     try:
-        tickers = load_portfolio()["Ticker"].tolist()
-        data = fetch_price_history(tickers, period)
-        return jsonify({"status": "ok", **data})
+        create_portfolio(name)
+        return jsonify({"status": "ok"})
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 409
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/api/holdings", methods=["POST"])
-def add_holding_route():
+@app.route("/api/portfolios/<name>", methods=["DELETE"])
+def del_portfolio(name):
+    try:
+        delete_portfolio(name)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# --- Holdings ---
+
+@app.route("/api/portfolios/<name>/holdings")
+def get_holdings(name):
+    try:
+        return jsonify({"status": "ok", "data": build_portfolio_snapshot(name)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/portfolios/<name>/holdings", methods=["POST"])
+def add_holding_route(name):
     body = request.get_json(silent=True) or {}
     ticker = str(body.get("ticker", "")).upper().strip()
     try:
@@ -45,14 +71,14 @@ def add_holding_route():
     if shares <= 0 or cost_basis <= 0:
         return jsonify({"status": "error", "message": "shares and cost_basis must be positive"}), 400
     try:
-        add_holding(ticker, shares, cost_basis)
+        add_holding(name, ticker, shares, cost_basis)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/api/holdings/<ticker>", methods=["PUT"])
-def update_holding_route(ticker):
+@app.route("/api/portfolios/<name>/holdings/<ticker>", methods=["PUT"])
+def update_holding_route(name, ticker):
     body = request.get_json(silent=True) or {}
     try:
         shares = float(body.get("shares", 0))
@@ -62,17 +88,31 @@ def update_holding_route(ticker):
     if shares <= 0 or cost_basis <= 0:
         return jsonify({"status": "error", "message": "shares and cost_basis must be positive"}), 400
     try:
-        add_holding(ticker.upper().strip(), shares, cost_basis)
+        add_holding(name, ticker.upper().strip(), shares, cost_basis)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/api/holdings/<ticker>", methods=["DELETE"])
-def remove_holding_route(ticker):
+@app.route("/api/portfolios/<name>/holdings/<ticker>", methods=["DELETE"])
+def remove_holding_route(name, ticker):
     try:
-        remove_holding(ticker.upper().strip())
+        remove_holding(name, ticker.upper().strip())
         return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# --- History ---
+
+@app.route("/api/portfolios/<name>/history")
+def history(name):
+    period = request.args.get("period", "1y")
+    if period not in ("1mo", "3mo", "6mo", "1y"):
+        period = "1y"
+    try:
+        data = fetch_price_history(name, period)
+        return jsonify({"status": "ok", **data})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
