@@ -10,6 +10,28 @@ def load_portfolio(csv_path: str = "portfolio.csv") -> pd.DataFrame:
     return df
 
 
+def save_portfolio(df: pd.DataFrame, csv_path: str = "portfolio.csv") -> None:
+    df.to_csv(csv_path, index=False)
+
+
+def add_holding(ticker: str, shares: float, cost_basis: float, csv_path: str = "portfolio.csv") -> None:
+    df = load_portfolio(csv_path)
+    ticker = ticker.upper().strip()
+    if ticker in df["Ticker"].values:
+        df.loc[df["Ticker"] == ticker, "Shares"] = shares
+        df.loc[df["Ticker"] == ticker, "Cost Basis"] = cost_basis
+    else:
+        new_row = pd.DataFrame([{"Ticker": ticker, "Shares": shares, "Cost Basis": cost_basis}])
+        df = pd.concat([df, new_row], ignore_index=True)
+    save_portfolio(df, csv_path)
+
+
+def remove_holding(ticker: str, csv_path: str = "portfolio.csv") -> None:
+    df = load_portfolio(csv_path)
+    df = df[df["Ticker"] != ticker.upper().strip()]
+    save_portfolio(df, csv_path)
+
+
 def fetch_current_prices(tickers: list[str]) -> dict[str, float]:
     data = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
     prices = {}
