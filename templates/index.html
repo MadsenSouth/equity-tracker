@@ -273,6 +273,61 @@
     #page-loading {
       text-align: center; padding: 4rem; color: #64748b; font-size: 0.9rem;
     }
+
+    /* ── Import bar ── */
+    #import-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+      padding: 0.65rem 1rem;
+      background: #1e2332;
+      border: 1px solid #2d3748;
+      border-radius: 10px;
+      flex-wrap: wrap;
+    }
+
+    .import-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #64748b;
+      margin-right: 0.25rem;
+    }
+
+    .template-btn, .upload-btn {
+      padding: 0.32rem 0.85rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .template-btn {
+      background: transparent;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+    .template-btn:hover { border-color: #60a5fa; color: #e2e8f0; }
+
+    .upload-btn {
+      background: #2563eb;
+      border: 1px solid #2563eb;
+      color: #fff;
+    }
+    .upload-btn:hover { background: #1d4ed8; }
+    .upload-btn.loading { background: #334155; border-color: #334155; cursor: default; }
+
+    #import-result {
+      font-size: 0.8rem;
+      flex: 1;
+    }
+    #import-result .ok   { color: #4ade80; }
+    #import-result .warn { color: #f59e0b; }
+    #import-result .err  { color: #f87171; }
   </style>
 </head>
 <body>
@@ -285,6 +340,17 @@
 
 <div id="portfolios-root">
   <div id="page-loading"><span class="spinner"></span>Loading portfolios…</div>
+</div>
+
+<div id="import-bar">
+  <span class="import-label">Excel</span>
+  <a class="template-btn" href="/api/template" download>⬇ Download Template</a>
+  <label class="upload-btn" id="upload-label">
+    ↑ Import File
+    <input type="file" id="import-file-input" accept=".xlsx,.xls"
+           style="display:none" onchange="importFile(event)">
+  </label>
+  <div id="import-result"></div>
 </div>
 
 <script>
@@ -832,6 +898,47 @@
   }
 
   // Enter key on new-portfolio input (attached after render in loadPortfolios)
+
+  /* ══════════════════════════════════════════
+     EXCEL IMPORT
+  ══════════════════════════════════════════ */
+
+  async function importFile(event) {
+    const file  = event.target.files[0];
+    if (!file) return;
+    const label  = document.getElementById("upload-label");
+    const result = document.getElementById("import-result");
+
+    label.classList.add("loading");
+    label.childNodes[0].textContent = " Importing…";
+    result.innerHTML = "";
+
+    const form = new FormData();
+    form.append("file", file);
+
+    try {
+      const res  = await fetch("/api/import", { method: "POST", body: form });
+      const json = await res.json();
+
+      if (json.status !== "ok") {
+        result.innerHTML = `<span class="err">Error: ${json.message}</span>`;
+      } else {
+        const { imported, skipped, errors } = json;
+        let html = `<span class="ok">✓ ${imported} row${imported !== 1 ? "s" : ""} imported</span>`;
+        if (skipped)         html += `<span class="warn">  · ${skipped} skipped</span>`;
+        if (errors?.length)  html += `<span class="warn">  · ${errors.length} error${errors.length !== 1 ? "s" : ""}:
+          <ul style="margin:0.25rem 0 0 1rem">${errors.map(e => `<li>${e}</li>`).join("")}</ul></span>`;
+        result.innerHTML = html;
+        if (imported > 0) await loadPortfolios();
+      }
+    } catch (err) {
+      result.innerHTML = `<span class="err">Upload failed: ${err.message}</span>`;
+    } finally {
+      label.classList.remove("loading");
+      label.childNodes[0].textContent = " Import File";
+      event.target.value = "";   // allow re-uploading the same file
+    }
+  }
 
   // boot
   loadPortfolios();

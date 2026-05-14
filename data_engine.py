@@ -1,9 +1,13 @@
+import io
 import os
 import shutil
 from datetime import date, datetime, timedelta
 
 import pandas as pd
 import yfinance as yf
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 PORTFOLIOS_DIR = "portfolios"
 
@@ -247,3 +251,150 @@ def build_portfolios_summary() -> list[dict]:
             "return_1y_pct": round(weighted_return / total_value, 2) if total_value else None,
         })
     return summaries
+
+
+# ── Excel import / export ────────────────────────────────────────────────────
+
+_TEMPLATE_COLS = ["Ticker", "Shares", "Cost Basis", "Purchase Date", "Portfolio"]
+_EXAMPLES = [
+    ("AAPL",  10,   150.00, "2023-01-15", "Main"),
+    ("MSFT",   5,   280.00, "2022-08-20", "Main"),
+    ("NVDA",   8,   220.00, "",           "Tech"),
+    ("GOOGL",  3,   120.00, "2024-03-10", "Tech"),
+]
+
+
+def generate_template() -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Holdings"
+
+    hdr_fill = PatternFill(fgColor="1E2332", fill_type="solid")
+    hdr_font = Font(bold=True, color="E2E8F0", size=11)
+    ex_fill  = PatternFill(fgColor="1A1F2E", fill_type="solid")
+    ex_font  = Font(color="64748B", italic=True, size=10)
+    note_font = Font(color="475569", italic=True, size=9)
+
+    for col, name in enumerate(_TEMPLATE_COLS, 1):
+        c = ws.cell(row=1, column=col, value=name)
+        c.fill = hdr_fill
+        c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+
+    for r, row in enumerate(_EXAMPLES, 2):
+        for col, val in enumerate(row, 1):
+            c = ws.cell(row=r, column=col, value=val)
+            c.fill = ex_fill
+            c.font = ex_font
+
+    note_row = len(_EXAMPLES) + 3
+    note = ws.cell(row=note_row, column=1,
+                   value="* Rows 2–5 are examples — replace or delete them.  "
+                         "Purchase Date is optional; use YYYY-MM-DD format.  "
+                         "Portfolio names are created automatically if they don't exist.")
+    note.font = note_font
+    ws.merge_cells(start_row=note_row, start_column=1,
+                   end_row=note_row, end_column=len(_TEMPLATE_COLS))
+
+    col_widths = [12, 10, 14, 18, 16]
+    for col, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.row_dimensions[1].height = 22
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _parse_date(raw) -> str:
+    """Return YYYY-MM-DD string or '' if raw is empty/unparseable."""
+    if raw is None:
+        return ""
+    if hasattr(raw, "strftime"):          # datetime/date from openpyxl
+        return raw.strftime("%Y-%m-%d")
+    s = str(raw).strip()
+    if not s:
+        return ""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return ""                             # unparseable — import without date
+
+
+def import_from_excel(file_bytes: bytes) -> dict:
+    wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {"imported": 0, "skipped": 0, "errors": []}
+
+    # Normalise header names
+    raw_headers = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
+    def col(name):
+        for alias in (name, name.replace(" ", "_"), name.replace("_", " ")):
+            try:
+                return raw_headers.index(alias)
+            except ValueError:
+                pass
+        return None
+
+    ci = {
+        "ticker":        col("ticker"),
+        "shares":        col("shares"),
+        "cost_basis":    col("cost basis") if col("cost basis") is not None else col("cost_basis"),
+        "purchase_date": col("purchase date") if col("purchase date") is not None else col("purchase_date"),
+        "portfolio":     col("portfolio"),
+    }
+    missing = [k for k, v in ci.items() if v is None and k not in ("purchase_date",)]
+    if missing:
+        raise ValueError(f"Template is missing required columns: {', '.join(missing)}")
+
+    existing_portfolios = set(list_portfolio_names())
+    imported = skipped = 0
+    errors = []
+
+    for row_num, row in enumerate(rows[1:], start=2):
+        def get(key):
+            idx = ci.get(key)
+            return row[idx] if idx is not None and idx < len(row) else None
+
+        ticker    = str(get("ticker") or "").strip().upper()
+        portfolio = str(get("portfolio") or "").strip()
+
+        if not ticker or not portfolio:
+            skipped += 1
+            continue
+
+        # Skip the built-in example rows if the user left them in
+        if ticker in {t for t, *_ in _EXAMPLES} and portfolio in {p for *_, p in _EXAMPLES}:
+            skipped += 1
+            continue
+
+        try:
+            shares     = float(get("shares"))
+            cost_basis = float(get("cost_basis"))
+        except (TypeError, ValueError):
+            errors.append(f"Row {row_num} ({ticker}): Shares and Cost Basis must be numbers.")
+            continue
+
+        if shares <= 0 or cost_basis <= 0:
+            errors.append(f"Row {row_num} ({ticker}): Shares and Cost Basis must be positive.")
+            continue
+
+        purchase_date = _parse_date(get("purchase_date"))
+
+        if portfolio not in existing_portfolios:
+            create_portfolio(portfolio)
+            existing_portfolios.add(portfolio)
+
+        try:
+            add_holding(portfolio, ticker, shares, cost_basis, purchase_date)
+            imported += 1
+        except Exception as e:
+            errors.append(f"Row {row_num} ({ticker}): {e}")
+
+    return {"imported": imported, "skipped": skipped, "errors": errors}

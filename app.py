@@ -1,8 +1,10 @@
-from flask import Flask, jsonify, render_template, request
+import io
+from flask import Flask, jsonify, render_template, request, send_file
 from data_engine import (
     list_portfolio_names, create_portfolio, delete_portfolio,
     build_portfolios_summary, build_portfolio_snapshot,
     fetch_price_history, add_holding, update_holding, remove_holding,
+    generate_template, import_from_excel,
 )
 
 app = Flask(__name__)
@@ -119,6 +121,33 @@ def history(name):
     try:
         data = fetch_price_history(name, period=period, start=start or None, end=end or None)
         return jsonify({"status": "ok", **data})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/template")
+def download_template():
+    buf = io.BytesIO(generate_template())
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name="equity_tracker_template.xlsx",
+    )
+
+
+@app.route("/api/import", methods=["POST"])
+def import_holdings_route():
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file attached"}), 400
+    f = request.files["file"]
+    if not f.filename.lower().endswith((".xlsx", ".xls")):
+        return jsonify({"status": "error", "message": "Only .xlsx / .xls files are supported"}), 400
+    try:
+        result = import_from_excel(f.read())
+        return jsonify({"status": "ok", **result})
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
