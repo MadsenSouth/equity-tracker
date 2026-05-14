@@ -51,6 +51,23 @@ def add_holding_route():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/holdings/<ticker>", methods=["PUT"])
+def update_holding_route(ticker):
+    body = request.get_json(silent=True) or {}
+    try:
+        shares = float(body.get("shares", 0))
+        cost_basis = float(body.get("cost_basis", 0))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "shares and cost_basis must be numbers"}), 400
+    if shares <= 0 or cost_basis <= 0:
+        return jsonify({"status": "error", "message": "shares and cost_basis must be positive"}), 400
+    try:
+        add_holding(ticker.upper().strip(), shares, cost_basis)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/holdings/<ticker>", methods=["DELETE"])
 def remove_holding_route(ticker):
     try:

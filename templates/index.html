@@ -122,18 +122,33 @@
     .negative { color: #f87171; }
     .neutral  { color: #94a3b8; }
 
-    /* Delete button */
-    .del-btn {
+    /* Row action buttons */
+    .del-btn, .edit-btn, .save-btn, .cancel-btn {
       background: none;
       border: none;
-      color: #475569;
       cursor: pointer;
       font-size: 1rem;
       line-height: 1;
-      padding: 0 0.25rem;
+      padding: 0 0.2rem;
       transition: color 0.15s;
     }
-    .del-btn:hover { color: #f87171; }
+    .del-btn    { color: #475569; } .del-btn:hover    { color: #f87171; }
+    .edit-btn   { color: #475569; } .edit-btn:hover   { color: #60a5fa; }
+    .save-btn   { color: #475569; } .save-btn:hover   { color: #4ade80; }
+    .cancel-btn { color: #475569; } .cancel-btn:hover { color: #94a3b8; }
+
+    /* Inline edit inputs */
+    .edit-input {
+      background: #0f1117;
+      border: 1px solid #60a5fa;
+      border-radius: 4px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      padding: 0.2rem 0.4rem;
+      width: 80px;
+      text-align: right;
+    }
+    .edit-input:focus { outline: none; }
 
     /* Add-position form */
     #add-form {
@@ -443,18 +458,55 @@
     }
 
     tbody.innerHTML = data.map(r => `
-      <tr>
+      <tr id="row-${r.ticker}">
         <td>${r.ticker}</td>
-        <td>${fmt.shares(r.shares)}</td>
-        <td>${fmt.currency(r.cost_basis)}</td>
+        <td id="cell-shares-${r.ticker}">${fmt.shares(r.shares)}</td>
+        <td id="cell-cb-${r.ticker}">${fmt.currency(r.cost_basis)}</td>
         <td>${fmt.currency(r.current_price)}</td>
         <td>${fmt.currency(r.market_value)}</td>
         <td class="${colorClass(r.pnl_dollars)}">${fmt.currency(r.pnl_dollars)}</td>
         <td class="${colorClass(r.pnl_pct)}">${fmt.pct(r.pnl_pct)}</td>
         <td class="${colorClass(r.return_1y_pct)}">${fmt.pct(r.return_1y_pct)}</td>
-        <td><button class="del-btn" title="Remove ${r.ticker}" onclick="deleteHolding('${r.ticker}')">✕</button></td>
+        <td id="cell-actions-${r.ticker}">
+          <button class="edit-btn" title="Edit ${r.ticker}" onclick="editRow('${r.ticker}')">✎</button>
+          <button class="del-btn"  title="Remove ${r.ticker}" onclick="deleteHolding('${r.ticker}')">✕</button>
+        </td>
       </tr>
     `).join("");
+  }
+
+  function editRow(ticker) {
+    const r = portfolioData.find(x => x.ticker === ticker);
+    if (!r) return;
+    document.getElementById(`cell-shares-${ticker}`).innerHTML =
+      `<input class="edit-input" id="edit-shares-${ticker}" type="number" value="${r.shares}" min="0.0001" step="any">`;
+    document.getElementById(`cell-cb-${ticker}`).innerHTML =
+      `<input class="edit-input" id="edit-cb-${ticker}" type="number" value="${r.cost_basis}" min="0.0001" step="any">`;
+    document.getElementById(`cell-actions-${ticker}`).innerHTML =
+      `<button class="save-btn"   title="Save"   onclick="saveEdit('${ticker}')">✓</button>` +
+      `<button class="cancel-btn" title="Cancel" onclick="renderTable(portfolioData)">✕</button>`;
+    document.getElementById(`edit-shares-${ticker}`).focus();
+  }
+
+  async function saveEdit(ticker) {
+    const shares    = parseFloat(document.getElementById(`edit-shares-${ticker}`)?.value);
+    const costBasis = parseFloat(document.getElementById(`edit-cb-${ticker}`)?.value);
+    if (isNaN(shares) || isNaN(costBasis) || shares <= 0 || costBasis <= 0) {
+      alert("Shares and Cost Basis must be positive numbers.");
+      return;
+    }
+    try {
+      const res  = await fetch(`/api/holdings/${ticker}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shares, cost_basis: costBasis }),
+      });
+      const json = await res.json();
+      if (json.status !== "ok") throw new Error(json.message);
+      await Promise.all([loadPortfolio(), reloadChart()]);
+    } catch (err) {
+      alert("Error saving " + ticker + ": " + err.message);
+    }
   }
 
   async function deleteHolding(ticker) {
