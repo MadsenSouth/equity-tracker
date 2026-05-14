@@ -183,7 +183,16 @@
       font-size: 0.82rem; padding: 0.18rem 0.35rem;
       width: 76px; text-align: right;
     }
+    .edit-input-date { width: 118px; text-align: left; }
     .edit-input:focus { outline: none; }
+
+    /* date inputs: force dark styling across browsers */
+    input[type="date"] {
+      color-scheme: dark;
+      background: #0f1117; border: 1px solid #334155; border-radius: 6px;
+      color: #e2e8f0; font-size: 0.82rem; padding: 0.3rem 0.55rem;
+    }
+    input[type="date"]:focus { outline: none; border-color: #60a5fa; }
 
     /* ── Add-position form ── */
     .add-form {
@@ -269,9 +278,10 @@
 
   /* ── Formatters ── */
   const fmt = {
-    usd: v => v == null ? "—" : "$" + v.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}),
-    pct: v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%",
-    num: v => v == null ? "—" : v.toLocaleString("en-US"),
+    usd:  v => v == null ? "—" : "$" + v.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}),
+    pct:  v => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%",
+    num:  v => v == null ? "—" : v.toLocaleString("en-US"),
+    held: d => d == null ? "—" : d < 30 ? `${d}d` : d < 365 ? `${Math.round(d / 30)}mo` : `${(d / 365).toFixed(1)}yr`,
   };
   const cc = v => v == null ? "neutral" : v >= 0 ? "positive" : "negative";
 
@@ -384,24 +394,27 @@
               <th data-p="${name}" data-col="ticker">Ticker <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="shares">Shares <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="cost_basis">Cost Basis <span class="sa">↕</span></th>
+              <th data-p="${name}" data-col="purchase_date">Purchased <span class="sa">↕</span></th>
+              <th data-p="${name}" data-col="days_held">Held <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="current_price">Price <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="market_value">Mkt Value <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="pnl_dollars">P&amp;L ($) <span class="sa">↕</span></th>
               <th data-p="${name}" data-col="pnl_pct">P&amp;L (%) <span class="sa">↕</span></th>
-              <th data-p="${name}" data-col="return_1y_pct">1Y Return <span class="sa">↕</span></th>
+              <th data-p="${name}" data-col="ann_return_pct">Ann. Return <span class="sa">↕</span></th>
               <th></th>
             </tr>
           </thead>
           <tbody id="hbody-${esc}">
-            <tr><td colspan="9" style="text-align:center;padding:1.5rem;color:#64748b">
+            <tr><td colspan="11" style="text-align:center;padding:1.5rem;color:#64748b">
               <span class="spinner"></span>Loading holdings…
             </td></tr>
           </tbody>
         </table>
         <div class="add-form">
-          <input id="ft-${esc}"  type="text"   placeholder="Ticker"     maxlength="10" />
-          <input id="fs-${esc}"  type="number" placeholder="Shares"     min="0.0001" step="any" />
-          <input id="fcb-${esc}" type="number" placeholder="Cost Basis" min="0.0001" step="any" />
+          <input id="ft-${esc}"  type="text"   placeholder="Ticker"         maxlength="10" />
+          <input id="fs-${esc}"  type="number" placeholder="Shares"         min="0.0001" step="any" />
+          <input id="fcb-${esc}" type="number" placeholder="Cost Basis"     min="0.0001" step="any" />
+          <input id="fpd-${esc}" type="date"   title="Purchase date (optional)" />
           <button id="fab-${esc}" onclick="submitAdd('${name}')">+ Add</button>
           <span class="form-msg" id="fmsg-${esc}"></span>
         </div>
@@ -490,23 +503,25 @@
     const data = holdings[name] || [];
 
     if (!data.length) {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:#64748b">No positions yet.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:1.5rem;color:#64748b">No positions yet.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = data.map(r => `
-      <tr id="row-${esc}-${r.ticker}">
+      <tr id="row-${esc}-${r.id}">
         <td>${r.ticker}</td>
-        <td id="cs-${esc}-${r.ticker}">${fmt.num(r.shares)}</td>
-        <td id="ccb-${esc}-${r.ticker}">${fmt.usd(r.cost_basis)}</td>
+        <td id="cs-${esc}-${r.id}">${fmt.num(r.shares)}</td>
+        <td id="ccb-${esc}-${r.id}">${fmt.usd(r.cost_basis)}</td>
+        <td id="cpd-${esc}-${r.id}" style="color:#94a3b8">${r.purchase_date ?? "—"}</td>
+        <td>${fmt.held(r.days_held)}</td>
         <td>${fmt.usd(r.current_price)}</td>
         <td>${fmt.usd(r.market_value)}</td>
         <td class="${cc(r.pnl_dollars)}">${fmt.usd(r.pnl_dollars)}</td>
         <td class="${cc(r.pnl_pct)}">${fmt.pct(r.pnl_pct)}</td>
-        <td class="${cc(r.return_1y_pct)}">${fmt.pct(r.return_1y_pct)}</td>
-        <td id="ca-${esc}-${r.ticker}">
-          <button class="edit-btn" onclick="editRow('${name}','${r.ticker}')">✎</button>
-          <button class="del-btn"  onclick="deleteHolding('${name}','${r.ticker}')">✕</button>
+        <td class="${cc(r.ann_return_pct)}">${fmt.pct(r.ann_return_pct)}</td>
+        <td id="ca-${esc}-${r.id}">
+          <button class="edit-btn" onclick="editRow('${name}','${r.id}')">✎</button>
+          <button class="del-btn"  onclick="deleteHolding('${name}','${r.id}','${r.ticker}')">✕</button>
         </td>
       </tr>`).join("");
   }
@@ -536,32 +551,35 @@
   }
 
   /* ── Edit ── */
-  function editRow(name, ticker) {
+  function editRow(name, lotId) {
     const esc = CSS.escape(name);
-    const r   = (holdings[name] || []).find(x => x.ticker === ticker);
+    const r   = (holdings[name] || []).find(x => x.id === lotId);
     if (!r) return;
-    document.getElementById(`cs-${esc}-${ticker}`).innerHTML =
-      `<input class="edit-input" id="es-${esc}-${ticker}" type="number" value="${r.shares}" min="0.0001" step="any">`;
-    document.getElementById(`ccb-${esc}-${ticker}`).innerHTML =
-      `<input class="edit-input" id="ecb-${esc}-${ticker}" type="number" value="${r.cost_basis}" min="0.0001" step="any">`;
-    document.getElementById(`ca-${esc}-${ticker}`).innerHTML =
-      `<button class="save-btn"   onclick="saveEdit('${name}','${ticker}')">✓</button>` +
+    document.getElementById(`cs-${esc}-${lotId}`).innerHTML =
+      `<input class="edit-input" id="es-${esc}-${lotId}" type="number" value="${r.shares}" min="0.0001" step="any">`;
+    document.getElementById(`ccb-${esc}-${lotId}`).innerHTML =
+      `<input class="edit-input" id="ecb-${esc}-${lotId}" type="number" value="${r.cost_basis}" min="0.0001" step="any">`;
+    document.getElementById(`cpd-${esc}-${lotId}`).innerHTML =
+      `<input class="edit-input edit-input-date" id="epd-${esc}-${lotId}" type="date" value="${r.purchase_date ?? ""}">`;
+    document.getElementById(`ca-${esc}-${lotId}`).innerHTML =
+      `<button class="save-btn"   onclick="saveEdit('${name}','${lotId}')">✓</button>` +
       `<button class="cancel-btn" onclick="renderHoldings('${name}')">✕</button>`;
-    document.getElementById(`es-${esc}-${ticker}`)?.focus();
+    document.getElementById(`es-${esc}-${lotId}`)?.focus();
   }
 
-  async function saveEdit(name, ticker) {
-    const esc       = CSS.escape(name);
-    const shares    = parseFloat(document.getElementById(`es-${esc}-${ticker}`)?.value);
-    const costBasis = parseFloat(document.getElementById(`ecb-${esc}-${ticker}`)?.value);
+  async function saveEdit(name, lotId) {
+    const esc         = CSS.escape(name);
+    const shares      = parseFloat(document.getElementById(`es-${esc}-${lotId}`)?.value);
+    const costBasis   = parseFloat(document.getElementById(`ecb-${esc}-${lotId}`)?.value);
+    const purchaseDt  = document.getElementById(`epd-${esc}-${lotId}`)?.value || "";
     if (isNaN(shares) || isNaN(costBasis) || shares <= 0 || costBasis <= 0) {
       alert("Shares and Cost Basis must be positive numbers."); return;
     }
     try {
-      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings/${ticker}`, {
+      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings/${lotId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shares, cost_basis: costBasis }),
+        body: JSON.stringify({ shares, cost_basis: costBasis, purchase_date: purchaseDt }),
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
@@ -571,10 +589,10 @@
   }
 
   /* ── Delete holding ── */
-  async function deleteHolding(name, ticker) {
-    if (!confirm(`Remove ${ticker} from "${name}"?`)) return;
+  async function deleteHolding(name, lotId, ticker) {
+    if (!confirm(`Remove ${ticker} lot from "${name}"?`)) return;
     try {
-      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings/${ticker}`, { method: "DELETE" });
+      const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings/${lotId}`, { method: "DELETE" });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
       await Promise.all([loadHoldings(name), loadChart(name, activePeriod(name))]);
@@ -588,24 +606,26 @@
     const ticker = document.getElementById(`ft-${esc}`)?.value.trim().toUpperCase();
     const shares = parseFloat(document.getElementById(`fs-${esc}`)?.value);
     const cb     = parseFloat(document.getElementById(`fcb-${esc}`)?.value);
+    const pd     = document.getElementById(`fpd-${esc}`)?.value || "";
     const msg    = document.getElementById(`fmsg-${esc}`);
     const btn    = document.getElementById(`fab-${esc}`);
 
     if (!ticker || isNaN(shares) || isNaN(cb)) {
-      msg.textContent = "All fields required."; msg.style.color = "#f87171"; return;
+      msg.textContent = "Ticker, Shares, and Cost Basis are required."; msg.style.color = "#f87171"; return;
     }
     btn.disabled = true; btn.textContent = "Adding…"; msg.textContent = "";
     try {
       const res  = await fetch(`/api/portfolios/${encodeURIComponent(name)}/holdings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, shares, cost_basis: cb }),
+        body: JSON.stringify({ ticker, shares, cost_basis: cb, purchase_date: pd }),
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.message);
       document.getElementById(`ft-${esc}`).value  = "";
       document.getElementById(`fs-${esc}`).value  = "";
       document.getElementById(`fcb-${esc}`).value = "";
+      document.getElementById(`fpd-${esc}`).value = "";
       msg.textContent = `${ticker} added.`; msg.style.color = "#4ade80";
       await Promise.all([loadHoldings(name), loadChart(name, activePeriod(name))]);
       loadPortfolios();

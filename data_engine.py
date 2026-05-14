@@ -1,8 +1,9 @@
 import os
 import shutil
+from datetime import date, datetime, timedelta
+
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, timedelta
 
 PORTFOLIOS_DIR = "portfolios"
 
@@ -27,10 +28,25 @@ def list_portfolio_names() -> list[str]:
 def load_portfolio(name: str) -> pd.DataFrame:
     path = _portfolio_path(name)
     if not os.path.exists(path):
-        return pd.DataFrame(columns=["Ticker", "Shares", "Cost Basis"])
-    df = pd.read_csv(path)
+        return pd.DataFrame(columns=["ID", "Ticker", "Shares", "Cost Basis", "Purchase Date"])
+    df = pd.read_csv(path, dtype=str)
     df.columns = df.columns.str.strip()
+
+    changed = False
+    if "ID" not in df.columns:
+        df.insert(0, "ID", [str(i) for i in range(1, len(df) + 1)])
+        changed = True
+    if "Purchase Date" not in df.columns:
+        df["Purchase Date"] = ""
+        changed = True
+
     df["Ticker"] = df["Ticker"].str.upper().str.strip()
+    df["Shares"] = pd.to_numeric(df["Shares"], errors="coerce")
+    df["Cost Basis"] = pd.to_numeric(df["Cost Basis"], errors="coerce")
+    df["Purchase Date"] = df["Purchase Date"].fillna("").str.strip()
+
+    if changed:
+        save_portfolio(df, name)
     return df
 
 
@@ -39,12 +55,19 @@ def save_portfolio(df: pd.DataFrame, name: str) -> None:
     df.to_csv(_portfolio_path(name), index=False)
 
 
+def _next_id(df: pd.DataFrame) -> str:
+    if df.empty or "ID" not in df.columns:
+        return "1"
+    valid = [int(i) for i in df["ID"].astype(str) if i.isdigit()]
+    return str(max(valid, default=0) + 1)
+
+
 def create_portfolio(name: str) -> None:
     _ensure_dir()
     path = _portfolio_path(name)
     if os.path.exists(path):
         raise ValueError(f"Portfolio '{name}' already exists")
-    pd.DataFrame(columns=["Ticker", "Shares", "Cost Basis"]).to_csv(path, index=False)
+    pd.DataFrame(columns=["ID", "Ticker", "Shares", "Cost Basis", "Purchase Date"]).to_csv(path, index=False)
 
 
 def delete_portfolio(name: str) -> None:
@@ -53,23 +76,33 @@ def delete_portfolio(name: str) -> None:
         os.remove(path)
 
 
-def add_holding(name: str, ticker: str, shares: float, cost_basis: float) -> None:
+def add_holding(name: str, ticker: str, shares: float, cost_basis: float, purchase_date: str = "") -> None:
     df = load_portfolio(name)
-    ticker = ticker.upper().strip()
-    if ticker in df["Ticker"].values:
-        df.loc[df["Ticker"] == ticker, "Shares"] = shares
-        df.loc[df["Ticker"] == ticker, "Cost Basis"] = cost_basis
-    else:
-        df = pd.concat(
-            [df, pd.DataFrame([{"Ticker": ticker, "Shares": shares, "Cost Basis": cost_basis}])],
-            ignore_index=True,
-        )
+    new_row = pd.DataFrame([{
+        "ID": _next_id(df),
+        "Ticker": ticker.upper().strip(),
+        "Shares": shares,
+        "Cost Basis": cost_basis,
+        "Purchase Date": (purchase_date or "").strip(),
+    }])
+    df = pd.concat([df, new_row], ignore_index=True)
     save_portfolio(df, name)
 
 
-def remove_holding(name: str, ticker: str) -> None:
+def update_holding(name: str, lot_id: str, shares: float, cost_basis: float, purchase_date: str = "") -> None:
     df = load_portfolio(name)
-    df = df[df["Ticker"] != ticker.upper().strip()]
+    mask = df["ID"].astype(str) == str(lot_id)
+    if not mask.any():
+        raise ValueError(f"Lot ID {lot_id} not found")
+    df.loc[mask, "Shares"] = shares
+    df.loc[mask, "Cost Basis"] = cost_basis
+    df.loc[mask, "Purchase Date"] = (purchase_date or "").strip()
+    save_portfolio(df, name)
+
+
+def remove_holding(name: str, lot_id: str) -> None:
+    df = load_portfolio(name)
+    df = df[df["ID"].astype(str) != str(lot_id)]
     save_portfolio(df, name)
 
 
@@ -93,11 +126,7 @@ def fetch_one_year_returns(tickers: list[str]) -> dict[str, float | None]:
         return {}
     end = datetime.today()
     start = end - timedelta(days=365)
-    close = _download_close(
-        tickers,
-        start=start.strftime("%Y-%m-%d"),
-        end=end.strftime("%Y-%m-%d"),
-    )
+    close = _download_close(tickers, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
     returns = {}
     for t in tickers:
         try:
@@ -109,7 +138,7 @@ def fetch_one_year_returns(tickers: list[str]) -> dict[str, float | None]:
 
 
 def fetch_price_history(name: str, period: str = "1y") -> dict:
-    tickers = load_portfolio(name)["Ticker"].tolist()
+    tickers = load_portfolio(name)["Ticker"].unique().tolist()
     if not tickers:
         return {"dates": [], "series": {}}
     close = _download_close(tickers, period=period)
@@ -128,31 +157,59 @@ def fetch_price_history(name: str, period: str = "1y") -> dict:
     return {"dates": dates, "series": series}
 
 
+def _days_held(purchase_date_str) -> int | None:
+    s = str(purchase_date_str or "").strip()
+    if not s:
+        return None
+    try:
+        return (date.today() - date.fromisoformat(s)).days
+    except ValueError:
+        return None
+
+
+def _annualized_return(pnl_pct: float | None, days: int | None) -> float | None:
+    if pnl_pct is None or days is None or days <= 0:
+        return None
+    try:
+        return round(((1 + pnl_pct / 100) ** (365.0 / days) - 1) * 100, 2)
+    except (ValueError, OverflowError):
+        return None
+
+
 def build_portfolio_snapshot(name: str) -> list[dict]:
     df = load_portfolio(name)
-    tickers = df["Ticker"].tolist()
-    if not tickers:
+    if df.empty:
         return []
+    tickers = df["Ticker"].unique().tolist()
     prices = fetch_current_prices(tickers)
-    returns = fetch_one_year_returns(tickers)
     rows = []
     for _, row in df.iterrows():
         t = row["Ticker"]
         shares = float(row["Shares"])
         cb = float(row["Cost Basis"])
+        purchase_date = str(row.get("Purchase Date", "") or "").strip()
+        days = _days_held(purchase_date)
         price = prices.get(t)
         if price is None:
-            mv = pnl_d = pnl_p = None
+            mv = pnl_d = pnl_p = ann_r = None
         else:
             mv = round(shares * price, 2)
             cost = shares * cb
             pnl_d = round(mv - cost, 2)
             pnl_p = round(pnl_d / cost * 100, 2) if cost else None
+            ann_r = _annualized_return(pnl_p, days)
         rows.append({
-            "ticker": t, "shares": shares, "cost_basis": cb,
+            "id": str(row["ID"]),
+            "ticker": t,
+            "shares": shares,
+            "cost_basis": cb,
+            "purchase_date": purchase_date or None,
+            "days_held": days,
             "current_price": round(price, 2) if price else None,
-            "market_value": mv, "pnl_dollars": pnl_d, "pnl_pct": pnl_p,
-            "return_1y_pct": returns.get(t),
+            "market_value": mv,
+            "pnl_dollars": pnl_d,
+            "pnl_pct": pnl_p,
+            "ann_return_pct": ann_r,
         })
     return rows
 
